@@ -42,12 +42,6 @@ A simple browser-based calculator and visualizer for **Micro-g LaCoste A-10 abso
 4. Review numeric results and timeline graphic.
 5. Use **Export PNG** to save a copy of the graphic.
 
-## Example
-
-Defaults:  
-- 6 sets, 120 drops/set  
-- Drop interval: 2 s  
-- Red/Blue sequencing with RB = 3 min, Seq = 10 min  
 
 Produces:  
 - **Total time**: ~23 hours 33 minutes  
