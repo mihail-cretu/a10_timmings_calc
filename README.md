@@ -42,13 +42,6 @@ A simple browser-based calculator and visualizer for **Micro-g LaCoste A-10 abso
 4. Review numeric results and timeline graphic.
 5. Use **Export PNG** to save a copy of the graphic.
 
-
-Produces:  
-- **Total time**: ~23 hours 33 minutes  
-- **Set duration**: ~4 minutes  
-
-Timeline shows alternating Red/Blue sets with pauses.
-
 ---
 
 ### Notes
