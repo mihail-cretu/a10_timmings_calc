@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>A-10 Timing Calculator + Graphic</title>
+<style>
+  :root { --bg:#0b0d10; --card:#141922; --text:#e7ebf1; --muted:#9aa7b3; --red:#e74c3c; --blue:#3498db; --pause:#7f8c8d; --grid:#263140; }
+  html,body{background:var(--bg); color:var(--text); font:14px/1.45 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0}
+  .wrap{max-width:1160px; margin:24px auto; padding:0 16px}
+  h1{font-size:20px; margin:0 0 12px}
+  .card{background:var(--card); border-radius:14px; padding:16px; box-shadow:0 10px 20px rgba(0,0,0,.35);}
+  .grid{display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:10px}
+  label{display:block; font-weight:600; margin:0 0 6px}
+  input[type="number"]{width:100%; box-sizing:border-box; padding:10px 12px; border-radius:10px; border:1px solid #2a3342; background:#0f141b; color:var(--text)}
+  fieldset{border:1px solid #283041; border-radius:12px; padding:10px 12px}
+  legend{color:var(--muted); padding:0 6px; font-size:12px}
+  .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+  .muted{color:var(--muted)}
+  .hint{font-size:12px;color:var(--muted); margin-top:4px}
+  .out{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-top:10px}
+  .kv{background:#0f141b;border:1px solid #283041;padding:10px;border-radius:10px}
+  .kv b{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  button{background:#1f6feb; color:white; border:0; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:600}
+  button.secondary{background:#2b3342}
+  svg{width:100%; height:auto; background:#0f141b; border:1px solid #283041; border-radius:12px; margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>A-10 Timing Calculator + Graphic</h1>
+  <div class="card">
+    <div class="grid">
+      <div>
+        <label>Sets</label>
+        <input id="sets" type="number" min="1" step="1" value="6">
+      </div>
+      <div>
+        <label>Drop/Set</label>
+        <input id="drops_per_set" type="number" min="1" step="1" value="120">
+      </div>
+      <div>
+        <label>Drop Interval (s)</label>
+        <input id="drop_interval" type="number" min="1" step="1" value="2">
+      </div>
+      <div>
+        <label>Pulse Delay (s) <span class="muted">(0.27 × Drop Interval)</span></label>
+        <input id="pulse_delay" type="number" min="0" step="0.27" value="0.27">
+      </div>
+
+      <!-- Mode toggle (Sequencing default) -->
+      <div style="grid-column: span 3;">
+        <fieldset>
+          <legend>Scheduling mode (choose one)</legend>
+          <div class="row">
+            <label><input type="radio" name="mode" id="mode_seq" checked> Use <b>Red/Blue Sequencing</b></label>
+            <label style="margin-left:12px">Red/Blue Interval (min)</label>
+            <input id="rb_interval_min" type="number" min="0" step="1" value="3" style="width:120px">
+            <label style="margin-left:12px">Sequence Interval (min)</label>
+            <input id="seq_interval_min" type="number" min="0" step="1" value="10" style="width:120px">
+          </div>
+          <div class="row" style="margin-top:8px">
+            <label><input type="radio" name="mode" id="mode_set"> Use <b>Set Interval</b> (min)</label>
+            <input id="set_interval_min" type="number" min="0" step="0.1" value="3" style="width:120px; margin-left:12px">
+            <label class="muted" style="margin-left:12px"><input type="checkbox" id="alt_rb" checked> Alternate Red/Blue</label>
+          </div>
+          <div id="mins" class="hint"></div>
+        </fieldset>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <button id="calcBtn">Calculate & Draw</button>
+      <button id="exportBtn" class="secondary" title="Download the timeline as PNG">Export PNG</button>
+      <div class="muted" id="note"></div>
+    </div>
+
+    <div class="out" id="outputs"></div>
+
+    <!-- 3-lane Gantt -->
+    <svg id="gantt" viewBox="0 0 1160 280" preserveAspectRatio="xMidYMid meet" aria-label="Timing Gantt (Red / Pause / Blue)"></svg>
+
+    <div class="hint" style="margin-top:8px">
+      Set duration ≈ <code>(Drop/Set − 1) × Drop Interval + Pulse Delay</code>. In sequencing mode, minimums are enforced:
+      <code>RB ≥ (Drops/Set × Drop Interval) + 60s</code>, <code>Seq ≥ (2 × Drops/Set × Drop Interval) + 60s</code>. Axis & bars labeled in <b>mm:ss</b>.
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+const min_val_s = 0; //60;
+
+function humanize(sec){
+  // round to nearest second
+  sec = Math.round(sec);
+  const d = Math.floor(sec / 86400);  sec -= d*86400;
+  const h = Math.floor(sec / 3600);   sec -= h*3600;
+  const m = Math.floor(sec / 60);     sec -= m*60;
+  const s = sec;
+
+  const parts = [];
+  if (d) parts.push(`${d}${d===1?'d':'d'}`);
+  if (h) parts.push(`${h}${h===1?'h':'h'}`);
+  if (m) parts.push(`${m}${m===1?'m':'m'}`);
+
+  // include seconds only when total < 1 hour (optional—tune as you like)
+  if (!d && !h && (s || parts.length===0))
+    parts.push(`${s}${s===1?'s':'s'}`);
+
+  return parts.join(' ');
+}
+
+function humanize_long(sec){
+  // round to nearest second
+  sec = Math.round(sec);
+  const d = Math.floor(sec / 86400);  sec -= d*86400;
+  const h = Math.floor(sec / 3600);   sec -= h*3600;
+  const m = Math.floor(sec / 60);     sec -= m*60;
+  const s = sec;
+
+  const parts = [];
+  if (d) parts.push(`${d} ${d===1?'day':'days'}`);
+  if (h) parts.push(`${h} ${h===1?'hour':'hours'}`);
+  if (m) parts.push(`${m} ${m===1?'minute':'minutes'}`);
+
+  // include seconds only when total < 1 hour (optional—tune as you like)
+  if (!d && !h && (s || parts.length===0))
+    parts.push(`${s} ${s===1?'second':'seconds'}`);
+
+  return parts.join(' ');
+}
+
+
+
+// mm:ss formatter
+function mmss(sec){
+  sec = Math.max(0, Math.round(sec));
+  const m = Math.floor(sec/60);
+  const s = sec % 60;
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+// Keep Pulse Delay tied to 0.27 × Drop Interval by default
+$('drop_interval').addEventListener('input', ()=>{
+  const di = +$('drop_interval').value || 0;
+  $('pulse_delay').value = (0.27 * di).toFixed(3);
+  updateMinHints(); // mins depend on drop interval
+});
+
+// Mode enable/disable UI
+function syncModeUI(){
+  const seq = $('mode_seq').checked;
+  $('rb_interval_min').disabled = !seq;
+  $('seq_interval_min').disabled = !seq;
+
+  $('set_interval_min').disabled = seq;
+  $('alt_rb').disabled = seq;
+
+  updateMinHints();
+}
+document.querySelectorAll('input[name="mode"]').forEach(r=>r.addEventListener('change', syncModeUI));
+
+// Show live minimums + enforce min by setting input.min
+function updateMinHints(){
+  const drops = +$('drops_per_set').value || 0;
+  const di = +$('drop_interval').value || 0;
+  const rbMin = drops * di + min_val_s;      // seconds
+  const seqMin = drops * di * 2 + min_val_s; // seconds
+
+  // update hints
+  $('mins').textContent = $('mode_seq').checked
+    ? `Minimums — Red/Blue Interval ≥ ${humanize(rbMin)}  •  Sequence Interval ≥ ${humanize(seqMin)}`
+    : '';
+
+  // set <input min> in minutes for the sequencing fields
+  $('rb_interval_min').min = (rbMin/60).toFixed(4);
+  $('seq_interval_min').min = (seqMin/60).toFixed(4);
+}
+['drops_per_set','drop_interval'].forEach(id=>$(id).addEventListener('input', updateMinHints));
+
+function clampSeqMins(P){
+  // hard-block: if user enters below minimum, bump up to min
+  const rbMin = P.drops_per_set * P.drop_interval + min_val_s;
+  const seqMin = P.drops_per_set * P.drop_interval * 2 + min_val_s;
+  let clamped = false;
+
+  if (P.rb_interval < rbMin){ P.rb_interval = rbMin; clamped = true; }
+  if (P.seq_interval < seqMin){ P.seq_interval = seqMin; clamped = true; }
+  return { rbMin, seqMin, clamped };
+}
+
+function compute(){
+  const P = {
+    sets: +$('sets').value,
+    drops_per_set: +$('drops_per_set').value,
+    drop_interval: +$('drop_interval').value,  // seconds
+    pulse_delay: +$('pulse_delay').value,      // seconds
+    mode_seq: $('mode_seq').checked,
+    // minutes → seconds
+    rb_interval: (+$('rb_interval_min').value) * 60,
+    seq_interval: (+$('seq_interval_min').value) * 60,
+    set_interval: (+$('set_interval_min').value) * 60,
+    alt_rb: $('alt_rb').checked
+  };
+
+  // Set duration
+  const set_duration = Math.max(0, (P.drops_per_set - 1) * P.drop_interval + P.pulse_delay);
+
+  // Build starts
+  const starts = [];   // {t, type:'red'|'blue'}
+  let minInfo = {rbMin:0, seqMin:0, clamped:false};
+
+  if (P.mode_seq){
+    minInfo = clampSeqMins(P);
+    let seqIndex = 0;
+    while (starts.length < P.sets){
+      const redStart = seqIndex * P.seq_interval;
+      starts.push({t:redStart, type:'red'});
+      if (starts.length >= P.sets) break;
+      const blueStart = redStart + P.rb_interval;
+      starts.push({t:blueStart, type:'blue'});
+      seqIndex += 1;
+    }
+  } else {
+    // Set Interval mode (alternate or all red)
+    let t = 0;
+    for (let i=0;i<P.sets;i++){
+      const type = P.alt_rb ? (i%2===0 ? 'red':'blue') : 'red';
+      starts.push({t, type});
+      t += P.set_interval; // start-to-start
+    }
+  }
+
+  // Build 3-lane blocks
+  // Lanes: Red Laser, Pause, Blue Laser
+  const blocks = { red:[], pause:[], blue:[] };
+  for (let i=0; i<starts.length; i++){
+    const s = starts[i];
+    const next = starts[i+1];
+
+    // Set bar to lane
+    const lane = s.type === 'red' ? 'red' : 'blue';
+    blocks[lane].push({start:s.t, dur:set_duration, label:(s.type==='red'?'Red':'Blue')});
+
+    // Pause between end of this set and next start
+    if (next){
+      const pauseStart = s.t + set_duration;
+      const pauseDur = Math.max(0, next.t - pauseStart);
+      if (pauseDur > 0.01){
+        blocks.pause.push({start:pauseStart, dur:pauseDur, label:'Pause'});
+      }
+    }
+  }
+
+  const total_time = starts.length ? (starts[starts.length-1].t + set_duration) : 0;
+  return {P,set_duration,starts,blocks,total_time,minInfo};
+}
+
+function renderOutputs(o){
+  const lines = [
+    {k:'Total time', v:`${o.total_time.toFixed(2)} s (${humanize(o.total_time)})`},
+    {k:'Set duration', v:`${o.set_duration.toFixed(2)} s (${humanize(o.set_duration)})`}
+  ];
+  if (o.P.mode_seq){
+    lines.push({k:'Red/Blue Interval (used)', v:`${o.P.rb_interval.toFixed(2)} s (${humanize(o.P.rb_interval)})`});
+    lines.push({k:'Sequence Interval (used)', v:`${o.P.seq_interval.toFixed(2)} s (${humanize(o.P.seq_interval)})`});
+  } else {
+    lines.push({k:'Set Interval', v:`${o.P.set_interval.toFixed(2)} s (${humanize(o.P.set_interval)})`});
+    lines.push({k:'Alternate R/B', v:o.P.alt_rb ? 'Yes' : 'No'});
+  }
+  $('outputs').innerHTML = lines.map(({k,v})=>`<div class="kv"><b>${k}</b><div>${v}</div></div>`).join('');
+  $('note').textContent = o.P.mode_seq
+    ? (o.minInfo.clamped ? 'Sequencing minimums enforced (values increased as needed).' : 'Sequencing within minimums.')
+    : 'Using Set Interval mode.';
+}
+
+function renderGantt(o){
+  const svg = $('gantt');
+  const W = 1160, H = 280, PADL = 80, PADR = 20, PADT = 28, PADB = 44;
+  const axisY = H - PADB;
+
+  // Lanes: Red, Pause, Blue
+  const laneH = 44;
+  const gap = 20;
+  const laneY = {
+    red: PADT,
+    pause: PADT + laneH + gap,
+    blue: PADT + 2*(laneH + gap)
+  };
+
+  const colors = { red:'var(--red)', blue:'var(--blue)', pause:'var(--pause)' };
+  const T = Math.max(1, o.total_time);
+  const sx = t => PADL + (t / T) * (W - PADL - PADR);
+
+  // ticks per 60s
+  const ticks = [];
+  for (let s=0; s<=T+1; s+=60){ ticks.push(s); }
+
+  let g = `<rect x="0" y="0" width="${W}" height="${H}" fill="transparent"/>`;
+
+  // lane titles
+  g += `<text x="16" y="${laneY.red + laneH/2 + 4}" font-size="12" fill="var(--muted)">Red Laser</text>`;
+  g += `<text x="16" y="${laneY.pause + laneH/2 + 4}" font-size="12" fill="var(--muted)">Pause</text>`;
+  g += `<text x="16" y="${laneY.blue + laneH/2 + 4}" font-size="12" fill="var(--muted)">Blue Laser</text>`;
+
+  // grid & tick labels (shared)
+  ticks.forEach(t=>{
+    const x = sx(t);
+    g += `<line x1="${x}" y1="${PADT-8}" x2="${x}" y2="${axisY}" stroke="var(--grid)" stroke-dasharray="2,4"/>`;
+    g += `<text x="${x}" y="${axisY+16}" font-size="11" text-anchor="middle" fill="var(--muted)">${humanize(t)}</text>`;
+  });
+
+  // draw blocks per lane
+  ['red','pause','blue'].forEach(lane=>{
+    (o.blocks[lane] || []).forEach(b=>{
+      const x1 = sx(b.start), x2 = sx(b.start + b.dur), w = Math.max(1, x2 - x1);
+      g += `<rect x="${x1}" y="${laneY[lane]}" rx="6" ry="6" width="${w}" height="${laneH}" fill="${colors[lane]}"/>`;
+      const txt = `${b.label} ${mmss(b.start)}–${mmss(b.start + b.dur)}`;
+      g += `<text x="${x1 + w/2}" y="${laneY[lane] + laneH/2 + 4}" font-size="12" text-anchor="middle" fill="#fff">${txt}</text>`;
+    });
+  });
+
+  // axis line
+  g += `<line x1="${PADL}" y1="${axisY}" x2="${W-PADR}" y2="${axisY}" stroke="var(--grid)"/>`;
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = g;
+}
+
+// Export PNG
+$('exportBtn').addEventListener('click', ()=>{
+  const svg = $('gantt');
+  const xml = new XMLSerializer().serializeToString(svg);
+  const blob = new Blob([xml], {type:'image/svg+xml;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = function(){
+    const vb = svg.viewBox.baseVal, scale = 2;
+    const c = document.createElement('canvas');
+    c.width = vb.width * scale; c.height = vb.height * scale;
+    const ctx = c.getContext('2d');
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#0b0d10';
+    ctx.fillStyle = bg; ctx.fillRect(0,0,c.width,c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    const png = c.toDataURL('image/png');
+    const a = document.createElement('a'); a.href = png; a.download = 'a10_timing_gantt_3lane.png'; a.click();
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+});
+
+// Run
+function run(){
+  const o = compute();
+  renderOutputs(o);
+  renderGantt(o);
+}
+$('calcBtn').addEventListener('click', run);
+
+// Live UI wiring
+['sets','drops_per_set','drop_interval','pulse_delay','rb_interval_min','seq_interval_min','set_interval_min','alt_rb']
+  .forEach(id=>$(id).addEventListener('input', ()=>{}));
+
+syncModeUI();
+updateMinHints();
+run();
+</script>
+</body>
+</html>
